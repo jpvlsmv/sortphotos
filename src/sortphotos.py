@@ -5,6 +5,7 @@ sortphotos.py
 
 Created on 3/2/2013
 Copyright (c) S. Andrew Ning. All rights reserved.
+Parts Copyright (C) Joe Moore 2016
 
 """
 
@@ -419,6 +420,7 @@ def sortPhotos(src_dir, dest_dir, sort_format, rename_format, recursive=False,
             else:
                 shutil.move(src_file, dest_file)
 
+	    # TODO: Now, we will create links to our thumbnail and main page.
 
 
         if verbose:
