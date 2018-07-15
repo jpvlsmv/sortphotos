@@ -21,7 +21,10 @@ except:
 import filecmp
 from datetime import datetime, timedelta
 import re
+import locale
 
+# Setting locale to the 'local' value
+locale.setlocale(locale.LC_ALL, '')
 
 exiftool_location = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'Image-ExifTool', 'exiftool')
 
@@ -62,7 +65,7 @@ def parse_date_exif(date_string):
 
     if len(elements) > 1:
         time_entries = re.split('(\+|-|Z)', elements[1])  # ['HH:MM:SS', '+', 'HH:MM']
-        time = time_entries[0].rstrip(':').split(':')  # ['HH', 'MM', 'SS']  rstrip is there to handle malformed tag with a colon at the end
+        time = time_entries[0].split(':')  # ['HH', 'MM', 'SS']
 
         if len(time) == 3:
             hour = int(time[0])
@@ -142,7 +145,11 @@ def get_oldest_timestamp(data, additional_groups_to_ignore, additional_tags_to_i
             if isinstance(date, list):
                 date = date[0]
 
-            exifdate = parse_date_exif(date)
+            try:
+                exifdate = parse_date_exif(date)  # check for poor-formed exif data, but allow continuation
+            except Exception as e:
+                exifdate = None
+
             if exifdate and exifdate < oldest_date:
                 date_available = True
                 oldest_date = exifdate
@@ -220,7 +227,7 @@ class ExifTool(object):
 def sortPhotos(src_dir, dest_dir, sort_format, rename_format, recursive=False,
         copy_files=False, test=False, remove_duplicates=True, day_begins=0,
         additional_groups_to_ignore=['File'], additional_tags_to_ignore=[],
-        use_only_groups=None, use_only_tags=None, verbose=True):
+        use_only_groups=None, use_only_tags=None, verbose=True, keep_filename=False):
     """
     This function is a convenience wrapper around ExifTool based on common usage scenarios for sortphotos.py
 
@@ -245,6 +252,8 @@ def sortPhotos(src_dir, dest_dir, sort_format, rename_format, recursive=False,
         True if you just want to simulate how the files will be moved without actually doing any moving/copying
     remove_duplicates : bool
         True to remove files that are exactly the same in name and a file hash
+    keep_filename : bool
+        True to append original filename in case of duplicates instead of increasing number
     day_begins : int
         what hour of the day you want the day to begin (only for classification purposes).  Defaults at 0 as midnight.
         Can be used to group early morning photos with the previous day.  must be a number between 0-23
@@ -309,6 +318,9 @@ def sortPhotos(src_dir, dest_dir, sort_format, rename_format, recursive=False,
         # extract timestamp date for photo
         src_file, date, keys = get_oldest_timestamp(data, additional_groups_to_ignore, additional_tags_to_ignore)
 
+        # fixes further errors when using unicode characters like "\u20AC"
+        src_file.encode('utf-8')
+
         if verbose:
         # write out which photo we are at
             ending = ']'
@@ -359,10 +371,10 @@ def sortPhotos(src_dir, dest_dir, sort_format, rename_format, recursive=False,
 
         if rename_format is not None:
             _, ext = os.path.splitext(filename)
-            filename = date.strftime(rename_format) + ext
+            filename = date.strftime(rename_format) + ext.lower()
 
         # setup destination file
-        dest_file = os.path.join(dest_file, filename)
+        dest_file = os.path.join(dest_file, filename.encode('utf-8'))
         root, ext = os.path.splitext(dest_file)
 
         if verbose:
@@ -388,15 +400,15 @@ def sortPhotos(src_dir, dest_dir, sort_format, rename_format, recursive=False,
                 if remove_duplicates and filecmp.cmp(src_file, dest_compare):  # check for identical files
                     fileIsIdentical = True
                     if verbose:
-                        if copy_files:
-                            print('Identical file already exists.  Duplicate will be ignored.\n')
-                            # sys.stdout.flush()
-                        else:
-                            print('Identical file already exists.  Duplicate will be overwritten.')
+                        print('Identical file already exists.  Duplicate will be ignored.\n')
                     break
 
                 else:  # name is same, but file is different
-                    dest_file = root + '_' + str(append) + ext
+                    if keep_filename:
+                        orig_filename = os.path.splitext(os.path.basename(src_file))[0]
+                        dest_file = root + '_' + orig_filename + '_' + str(append) + ext
+                    else:
+                        dest_file = root + '_' + str(append) + ext
                     append += 1
                     if verbose:
                         print('Same name already exists...renaming to: ' + dest_file)
@@ -411,13 +423,13 @@ def sortPhotos(src_dir, dest_dir, sort_format, rename_format, recursive=False,
 
         else:
 
-            if copy_files:
-                if fileIsIdentical:
-                    continue  # if file is same, we just ignore it (for copy option)
-                else:
-                    shutil.copy2(src_file, dest_file)
+            if fileIsIdentical:
+                continue  # ignore identical files
             else:
-                shutil.move(src_file, dest_file)
+                if copy_files:
+                    shutil.copy2(src_file, dest_file)
+                else:
+                    shutil.move(src_file, dest_file)
 
 
 
@@ -452,6 +464,9 @@ def main():
                         help="rename file using format codes \n\
     https://docs.python.org/2/library/datetime.html#strftime-and-strptime-behavior. \n\
     default is None which just uses original filename")
+    parser.add_argument('--keep-filename', action='store_true',
+                        help='In case of duplicated output filenames an increasing number and the original file name will be appended',
+                        default=False)
     parser.add_argument('--keep-duplicates', action='store_true',
                         help='If file is a duplicate keep it anyway (after renaming).')
     parser.add_argument('--day-begins', type=int, default=0, help='hour of day that new day begins (0-23), \n\
@@ -481,7 +496,7 @@ def main():
     sortPhotos(args.src_dir, args.dest_dir, args.sort, args.rename, args.recursive,
         args.copy, args.test, not args.keep_duplicates, args.day_begins,
         args.ignore_groups, args.ignore_tags, args.use_only_groups,
-        args.use_only_tags, not args.silent)
+        args.use_only_tags, not args.silent, args.keep_filename)
 
 if __name__ == '__main__':
     main()
